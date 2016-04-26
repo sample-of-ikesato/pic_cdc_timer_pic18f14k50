@@ -32,12 +32,52 @@
 #include "usb_device_cdc.h"
 
 
+/**
+ * シリアル・ポートの Ready を待つ
+ * timer1 を使ってオーバフローならば 0 を返す
+ * Ready になれば 1 を返す
+ */
+int WaitToReadySerial(void)
+{
+  PIR1bits.TMR1IF = 0;
+  TMR1 = 0;
+  PIR1bits.TMR1IF = 0;
+  while (PIR1bits.TMR1IF==0) {
+    if (mUSBUSARTIsTxTrfReady())
+      return 1;
+    CDCTxService();
+  }
+  return 0;
+}
+
+//void PutsString(const char *str)
+//{
+//  if (!WaitToReadySerial()) return;
+//  strcpypgm2ram(USB_In_Buffer, (const far rom char*)str);
+//  putsUSBUSART(USB_In_Buffer);
+//  if (!WaitToReadySerial()) return;
+//}
+
+void PutsStringCPtr(char *str)
+{
+  if (!WaitToReadySerial()) return;
+  putsUSBUSART(str);
+  if (!WaitToReadySerial()) return;
+}
+
+
+
+
+unsigned char debug_flg = 0;
+char *dubug_str = "hoge\r\n";
+
 #define T0CNT (65536-46875)
 void interrupt_func(void)
 {
   if (INTCONbits.TMR0IF == 1) {
     TMR0 = T0CNT;
     INTCONbits.TMR0IF = 0;
+    debug_flg = 1;
     if (PORTBbits.RB6) {
       PORTA = 0;
       PORTB = 0;
@@ -74,11 +114,11 @@ void init(void)
   //   x = 12*1000/8 = 1500
   //   prescaler を 1:4 とすると 1500/4 = 375
   //
-  T0CONbits.TMR0ON = 1;
   T0CONbits.T08BIT = 0;     // 16bit timer
   T0CONbits.T0PS = 0b111;   // prescaler 1:256
   T0CONbits.T0CS = 0;
   T0CONbits.PSA = 0;        // use prescaler
+  T0CONbits.TMR0ON = 1;
   TMR0 = T0CNT;
   INTCON2bits.TMR0IP = 1;
   INTCONbits.TMR0IE = 1;
@@ -88,14 +128,13 @@ void init(void)
   INTCONbits.GIEL = 1;
 
 
-  // max 43.69[ms]
+  // timer1
+  T1CONbits.TMR1CS = 0;    // 内部クロック (FOSC/4)
+  T1CONbits.T1CKPS = 0b11; // prescaler 1:8
+  T1CONbits.RD16 = 1;      // 16bit
   T1CONbits.TMR1ON = 1;
-  T1CONbits.TMR1CS = 0;
-  T1CONbits.T1OSCEN = 1;
-  T1CONbits.T1CKPS = 0b11;
-  T1CONbits.RD16 = 1;
-  //T1CONbits.T1RUN = ;
-
+  //PIE1bits.TMR1IE = 1;
+  PIR1bits.TMR1IF = 0;
 }
 
 /********************************************************************
@@ -122,7 +161,6 @@ MAIN_RETURN main(void)
 
     init();
 
-    //PutsStringCPtr("hello world\r\n");
 
     while(1)
     {
@@ -166,6 +204,13 @@ MAIN_RETURN main(void)
 
         //Application specific tasks
         APP_DeviceCDCBasicDemoTasks();
+        if (debug_flg) {
+          debug_flg = 0;
+          if (WaitToReadySerial()) {
+            PutsStringCPtr("hello world\r\n");
+            PutsStringCPtr(dubug_str);
+          }
+        }
 
     }//end while
 }//end main
